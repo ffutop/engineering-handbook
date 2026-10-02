@@ -12,13 +12,15 @@
 - [`templates/filebeat-annotations.yaml`](templates/filebeat-annotations.yaml)：Filebeat 解析 line 格式的 Pod 注解；
 - [`templates/event-catalog.md`](templates/event-catalog.md)：事件清单与字段词表模板。
 
+规则分级、版本固定、例外与升级遵循[规范治理标准](../documentation/standard-governance.md)。
+
 ## 1. 项目采用声明
 
 采用本标准的项目在 `ENGINEERING_STANDARDS.md` 中至少声明：
 
 | 字段 | 要求 |
 |---|---|
-| 标准地址与版本 | 指向本文件，版本为 handbook 已发布的 Git tag |
+| 标准地址与版本 | 指向本文件，版本为 handbook 已发布的 Git tag，尚未发版时固定 commit SHA |
 | 输出格式与采集链路 | 日志格式、采集器的解析规则及其所在位置 |
 | 事件清单位置 | 本项目 event 与字段词表的现行规范来源 |
 

@@ -7,13 +7,15 @@
 - [`templates/release.yml`](templates/release.yml)：发版流水线，复制到 `.github/workflows/release.yml`；
 - [`templates/release-notes.yml`](templates/release-notes.yml)：发布说明分类，复制到 `.github/release.yml`。
 
+规则分级、版本固定、例外与升级遵循[规范治理标准](../documentation/standard-governance.md)。
+
 ## 1. 项目采用声明
 
 采用本标准的项目在 `ENGINEERING_STANDARDS.md` 中至少声明：
 
 | 字段 | 要求 |
 |---|---|
-| 标准地址与版本 | 指向本文件，版本为 handbook 已发布的 Git tag |
+| 标准地址与版本 | 指向本文件，版本为 handbook 已发布的 Git tag，尚未发版时固定 commit SHA |
 | 交付物 | 文件制品 / 容器镜像 / Helm chart 中的哪几种 |
 | 构建契约 | 产出文件制品的命令，默认 `make release-artifacts VERSION TARGET OUT` |
 | 目标平台 | 文件制品的 OS/架构矩阵；镜像的 `platforms` |
