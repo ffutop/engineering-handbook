@@ -29,14 +29,14 @@
 打 annotated tag vX.Y.Z 并推送
   └─ prepare   校验 tag，计算版本号，探测交付物
        ├─ build    构建文件制品          ┐
-       ├─ image    构建镜像，只按 digest 推送 ├ 此阶段对外不可见
+       ├─ image    构建镜像，只按 digest 推送 ├ 此阶段尚未公布版本
        └─ chart    lint 并打包 chart       ┘
             └─ release  [release 环境审批]
                  生成 SHA256SUMS 与来源证明 → 创建草稿 Release 并上传资产
                  → 镜像打 tag → 推送 chart → 公开 Release
 ```
 
-发版人只做一件事：在已合入的提交上创建并推送 tag。
+正常发版由发版人在已合入且满足检查要求的提交上创建并推送 tag；失败恢复由发版负责人处理。
 
 ```bash
 git tag -s v1.4.0 -m "v1.4.0"   # 未配置签名时使用 -a
@@ -55,20 +55,20 @@ git push origin v1.4.0
 ### 3.2 tag 必须可追溯
 
 - 必须是 annotated tag，推荐签名 tag。lightweight tag 会被流水线拒绝。
-- tag 指向的提交必须已存在于默认分支或声明的维护分支上，即已经过 PR 评审和必需检查。流水线不重复执行完整测试，因此分支保护是发版质量的前提。
+- tag 指向的提交必须已存在于默认分支或声明的维护分支上，分支包含关系只证明提交可达，不能证明已经过 PR 评审和必需检查；项目必须通过分支保护禁止绕过，或在流水线校验该提交的必需检查结果。流水线不重复执行完整测试，因此分支保护是发版质量的前提。
 - 通过仓库 Ruleset 保护 `refs/tags/v*`：仅发版负责人可创建，禁止更新和删除。
 
 ### 3.3 已发布版本不可变
 
 - 已公开的 Release、已推送的版本 tag 和不可变镜像 tag（`X.Y.Z`）不得修改、覆盖或删除。发现问题时发布新的 patch 版本向前修复。
 - 仓库开启 GitHub Immutable Releases。流水线先创建草稿、上传全部资产，最后才公开，以适配该设置。
-- 重跑失败的发版只允许在草稿阶段；Release 一旦公开，流水线拒绝再次发布同一 tag。重跑时应使用「Re-run failed jobs」，复用已构建的制品，保证推送内容与校验和一致。
+- 重跑失败的发版只允许在草稿阶段，并遵循第 4 节的恢复约束；Release 一旦公开，流水线拒绝再次发布同一 tag。重跑时应使用「Re-run failed jobs」，复用已构建的制品，保证推送内容与校验和一致。
 
 ### 3.4 构建一次，审批后统一对外
 
 - 每种交付物在一次运行中只构建一次；对外发布的必须是被计入校验和、被证明的同一份字节。
-- 审批前，镜像只按 digest 推送、不打 tag，chart 和文件只作为 workflow artifact 存在，均对外不可见。
-- 对外可见的动作全部集中在 `release` job，由 GitHub Environment `release` 的 required reviewers 放行。
+- 参考模板在审批前按 digest 推送镜像、不打版本 tag；有读取仓库权限的主体仍可能按 digest 拉取。若审批前要求禁止对外访问，必须采用私有暂存仓库或审批后推送，并验证访问控制。chart 和文件作为 workflow artifact 保存，访问权限与保留期由项目声明。
+- 版本 tag、chart 与 Release 的公布动作集中在 `release` job，由 GitHub Environment `release` 的 required reviewers 放行。
 
 ### 3.5 交付物规范
 
@@ -92,7 +92,18 @@ git push origin v1.4.0
 
 使用 GitHub 自动生成的发布说明，按 PR 标签分类（见 [`templates/release-notes.yml`](templates/release-notes.yml)）。流水线在其前面附加制品清单：镜像引用与 digest、chart 安装命令、校验与验证方法。破坏性变更必须带 `breaking-change` 标签，并在 PR 描述中写明迁移步骤。
 
-## 4. 项目必须决定的策略
+## 4. 部分成功与恢复
+
+GitHub Release、镜像仓库与 chart 仓库之间没有跨系统事务。最后公开 Release 是完成标记，不意味着其他交付物同时可见。项目须为每次发版记录 tag、源码提交、workflow run、文件校验和、镜像 digest 与 chart 内容摘要。
+
+- 重跑前检查每个目标的现状：不存在则推送；同版本且摘要相同则跳过；摘要不同则停止，禁止覆盖。草稿存在并不意味着镜像或 chart 尚未发布。
+- 已公开部分版本制品不得通过重新构建改变字节。优先复用原运行制品；制品过期或来源无法确认时停止恢复，使用新版本发布修复。
+- 浮动 tag 只能按项目声明的版本线推进；较旧版本或维护线发布不得把 `latest` 指回旧版本。跨版本发布须串行处理共享浮动 tag，或使用条件更新。
+- `release` 环境审批、tag Ruleset、分支保护、仓库访问控制及不可变策略属于首次采用的前置条件，不能仅靠复制 YAML 建立。
+
+参考模板展示正常路径，尚未自动实现摘要冲突检测、chart 幂等恢复及跨版本浮动 tag 排序。项目启用正式发布前必须补齐上述控制并演练部分成功后的重跑。
+
+## 5. 项目必须决定的策略
 
 以下不是本标准的默认结论，项目必须在采用声明或 ADR 中作出选择：
 
@@ -102,14 +113,15 @@ git push origin v1.4.0
 - 发版后的部署是否自动触发，以及由哪条流水线负责；
 - 是否使用独立的 CHANGELOG 文件，若使用，它与自动发布说明的关系。
 
-## 5. 评审与验证
+## 6. 评审与验证
 
 - 修改 `.github/workflows/release.yml` 必须经过发版负责人评审，并通过 `actionlint`。
 - 首次采用或修改流水线后，先推送一个预发布 tag（如 `v0.0.0-rc.1`）完成全流程验证，确认草稿、审批、镜像 tag、chart 推送与公开各步骤行为正确。
 - 每次发版后，发版负责人确认：Release 资产完整、`sha256sum -c SHA256SUMS` 通过、`gh attestation verify` 通过、镜像与 chart 可按发布说明中的命令拉取。
 
-## 6. 相关资料
+## 7. 相关资料
 
+- [Docker：镜像与 registry exporter](https://docs.docker.com/build/exporters/image-registry/)
 - [GitHub Actions：工作流语法](https://docs.github.com/actions/writing-workflows/workflow-syntax-for-github-actions)
 - [GitHub：Immutable releases](https://docs.github.com/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases)
 - [GitHub：Artifact attestations](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations)

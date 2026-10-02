@@ -1,13 +1,13 @@
 # GitHub 发版参考流水线
 #
 # 规范来源：standards/release/github-release.md
-# 采用方式：复制到项目的 .github/workflows/release.yml，只修改标注「项目适配」的位置。
+# 采用方式：复制到项目的 .github/workflows/release.yml，按项目采用声明适配；正式启用前补齐规范第 4 节的恢复与浮动 tag 控制。
 #
 # 流程：prepare → build / image / chart（并行）→ release（环境审批后统一对外发布）
 #
 #   prepare  校验 tag（格式、annotated、所在分支），计算版本号并探测制品类型
 #   build    调用项目构建契约产出二进制包，上传为 workflow artifact
-#   image    构建多架构镜像，只按 digest 推送（不打 tag，对外不可见）
+#   image    构建多架构镜像，只按 digest 推送（不打版本 tag；读取权限仍由镜像仓库控制）
 #   chart    lint 并打包 Helm chart，上传为 workflow artifact
 #   release  审批后：生成校验和与来源证明 → 创建草稿 Release → 镜像打 tag
 #            → 推送 chart → 最后公开 Release
@@ -77,7 +77,7 @@ jobs:
             exit 1
           fi
 
-          # tag 指向的提交必须已进入默认分支或维护分支（即已通过 PR 与必需检查）
+          # tag 指向的提交必须已进入默认分支或维护分支（不能据此证明已通过 PR 与必需检查，须由分支保护或额外检查保证）
           if ! git branch -r --contains "$GITHUB_SHA" --format='%(refname:short)' \
               | grep -Eq "^origin/(${DEFAULT_BRANCH}|${RELEASE_BRANCH_PATTERN})$"; then
             echo "::error::$GITHUB_SHA 不在 ${DEFAULT_BRANCH} 或 ${RELEASE_BRANCH_PATTERN} 分支上"
