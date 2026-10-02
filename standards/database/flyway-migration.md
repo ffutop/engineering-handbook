@@ -24,7 +24,7 @@
 
 ### 2.1 已发布迁移不可变
 
-任何已在共享环境执行的版本化迁移不得修改或删除，包括注释和格式。Flyway 使用 checksum 验证内容；修复必须新增后续迁移并向前修复。
+任何已在共享环境执行的版本化迁移不得修改或删除，包括注释、格式和影响执行的同名脚本配置。Flyway 使用 checksum 验证内容；修复必须新增后续迁移并向前修复。
 
 ### 2.2 文件职责清晰
 
@@ -47,11 +47,13 @@
 
 ### 2.5 非事务语句
 
-PostgreSQL 的 `CREATE INDEX CONCURRENTLY`、`DROP INDEX CONCURRENTLY` 和 `REINDEX CONCURRENTLY` 不能运行在事务块中。包含这些语句的迁移第一行必须为：
+PostgreSQL 的 `CREATE INDEX CONCURRENTLY`、`DROP INDEX CONCURRENTLY` 和 `REINDEX CONCURRENTLY` 不能运行在事务块中。包含这些语句的迁移必须提供同名脚本配置文件。例如 `V1.4.0.20261002173000__create_customer_index.sql` 对应 `V1.4.0.20261002173000__create_customer_index.sql.conf`：
 
-```sql
--- flyway:executeInTransaction=false
+```properties
+executeInTransaction=false
 ```
+
+SQL 注释不能替代 Flyway 脚本配置。项目须确认所用 Flyway 与数据库版本支持该配置，并在集成测试中验证实际执行方式。
 
 此类文件只应包含该项非事务操作。执行失败不会自动回滚，评审中必须确认清理和恢复步骤。
 
@@ -80,7 +82,7 @@ PostgreSQL 的 `CREATE INDEX CONCURRENTLY`、`DROP INDEX CONCURRENTLY` 和 `REIN
 
 ## 4. 评审与 CI
 
-项目 CI 必须依据采用声明检查新增迁移的命名：无既有规则的项目检查 `X.Y.Z` 为非负整数三段、时间戳为 14 位且日期时间有效、描述符合小写英文和下划线要求；已有规则的项目检查是否严格沿用原规则。CI 还至少检查重复版本号、非事务语句标记，以及对已发布迁移的修改。数据库集成测试应在临时数据库执行完整迁移链；含种子数据的变更应验证目标状态可重复得到。
+项目 CI 必须依据采用声明检查新增迁移的命名：无既有规则的项目检查 `X.Y.Z` 为非负整数三段、时间戳为 14 位且日期时间有效、描述符合小写英文和下划线要求；已有规则的项目检查是否严格沿用原规则。CI 还至少检查重复版本号、非事务语句对应的 `.sql.conf` 配置，以及对已发布迁移的修改。数据库集成测试应在临时数据库执行完整迁移链；含种子数据的变更应验证目标状态可重复得到。
 
 无法可靠静态判断的规则，例如破坏性变更、大批量回填和跨模块数据所有权，必须在 PR 模板或人工评审清单中确认。
 
@@ -88,4 +90,5 @@ PostgreSQL 的 `CREATE INDEX CONCURRENTLY`、`DROP INDEX CONCURRENTLY` 和 `REIN
 
 - [Flyway 版本化迁移](https://documentation.red-gate.com/fd/versioned-migrations-273973333.html)
 - [Flyway 版本编号](https://documentation.red-gate.com/fd/setting-your-version-numbering-162103499.html)
+- [Flyway 脚本配置](https://documentation.red-gate.com/flyway/reference/script-configuration)
 - [Flyway 官方文档](https://documentation.red-gate.com/flyway)
