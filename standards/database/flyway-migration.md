@@ -1,6 +1,6 @@
 # Flyway 数据库迁移标准
 
-本标准约束使用 Flyway 管理关系型数据库结构与受控基础数据的团队项目。它定义跨项目的最低要求；数据库拓扑、外键策略、版本号格式和发布方式等架构选择，由每个项目在 `ENGINEERING_STANDARDS.md` 和 ADR 中声明。
+本标准约束使用 Flyway 管理关系型数据库结构与受控基础数据的团队项目。它定义跨项目的最低要求；数据库拓扑、外键策略和发布方式等架构选择，由每个项目在 `ENGINEERING_STANDARDS.md` 和 ADR 中声明。
 
 规则分级、版本固定、例外与升级遵循[规范治理标准](../documentation/standard-governance.md)。
 
@@ -13,7 +13,7 @@
 | 标准地址 | 指向本文件的仓库 URL 或本地开发路径 |
 | 标准版本 | 已发布的不可变 Git tag，或尚未发版时固定 commit SHA；本地试用可暂用 `unreleased` |
 | 执行模型 | 单一实例，或按 schema / 模块创建多个实例 |
-| 版本号格式 | 项目内固定一种版本号格式 |
+| 版本号格式 | 无既有规则的项目采用 2.3 的正式命名规则；已有规则的项目记录并严格沿用原规则，同时声明时间戳时区（如适用） |
 | 外键策略 | 允许、限制或禁止，以及 ADR 地址 |
 | 执行时机 | 应用启动、发布 Job 或独立迁移流程 |
 | 大批量回填策略 | 任务归属、事务边界和审计方式 |
@@ -32,7 +32,12 @@
 
 ### 2.3 命名
 
-版本化迁移使用 `V{version}__{description}.sql`，描述使用小写英文和下划线，以动作说明意图，例如 `create_customer`、`add_status_column`、`seed_default_roles`。具体 version 格式由项目声明，发布后不得混用或重编号历史文件。
+版本化迁移的命名必须遵守以下两条规定，既有项目规则优先：
+
+1. **正式命名规则**：无既有命名规则的项目，版本化迁移必须使用 `V{X.Y.Z.yyyyMMddHHmmss}__{description}.sql`。其中 `X.Y.Z` 为编号分配时预期的目标发布版本；`yyyyMMddHHmmss` 为编号分配时间，14 位，依次表示年、月、日、时（24 小时制）、分、秒，采用项目声明的统一时区。例如 `V1.4.0.20261002173000__create_customer.sql`。首次在共享环境执行后，编号冻结；发布改期不再改写编号，实际发布归属由发布记录维护。
+2. **既有规则兼容**：项目已有命名规则时，必须严格沿用原规则，包括新增迁移；不得因采用本标准而切换格式、混用新规则或重命名、重编号历史文件。项目在采用声明中记录原规则及示例，CI 按原规则检查。
+
+描述使用小写英文和下划线，以动作说明意图，例如 `create_customer`、`add_status_column`、`seed_default_roles`。同一迁移序列内版本号必须唯一；时间戳不能替代重复版本检查，版本排序与执行顺序仍须按 Flyway 的版本比较规则验证。
 
 若项目使用 Flyway Community Edition，禁止提交 `U{version}__{description}.sql`，因为 Undo 脚本不会被执行。
 
@@ -75,10 +80,12 @@ PostgreSQL 的 `CREATE INDEX CONCURRENTLY`、`DROP INDEX CONCURRENTLY` 和 `REIN
 
 ## 4. 评审与 CI
 
-项目 CI 至少检查新增迁移的命名、重复版本号、非事务语句标记，以及对已发布迁移的修改。数据库集成测试应在临时数据库执行完整迁移链；含种子数据的变更应验证目标状态可重复得到。
+项目 CI 必须依据采用声明检查新增迁移的命名：无既有规则的项目检查 `X.Y.Z` 为非负整数三段、时间戳为 14 位且日期时间有效、描述符合小写英文和下划线要求；已有规则的项目检查是否严格沿用原规则。CI 还至少检查重复版本号、非事务语句标记，以及对已发布迁移的修改。数据库集成测试应在临时数据库执行完整迁移链；含种子数据的变更应验证目标状态可重复得到。
 
 无法可靠静态判断的规则，例如破坏性变更、大批量回填和跨模块数据所有权，必须在 PR 模板或人工评审清单中确认。
 
 ## 5. 相关资料
 
+- [Flyway 版本化迁移](https://documentation.red-gate.com/fd/versioned-migrations-273973333.html)
+- [Flyway 版本编号](https://documentation.red-gate.com/fd/setting-your-version-numbering-162103499.html)
 - [Flyway 官方文档](https://documentation.red-gate.com/flyway)
