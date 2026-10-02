@@ -1,0 +1,15 @@
+# Helm values 片段：Filebeat autodiscover hints 解析 line 格式日志。
+# 合并到 chart 的 podAnnotations，并保证 logging/line_test.go 中 dissect() 复现的规则与此处一致。
+#
+# 应用每条日志输出一行混合格式（log.format: line），无需 multiline：
+#   <时间> <等级> <event> <msg> | <上下文 JSON>
+# dissect 切分前缀列，decode_json_fields 解析上下文；字段均放在 app.* 下而不展开到根：
+# event 等字段在 ECS 模板中是对象类型，展开到根会与应用的字符串字段冲突，导致整条日志被 ES 拒绝写入。
+# 无法切分的行（如未被 recover 的 Go 运行时崩溃输出）保留原文，并带 dissect 解析失败标记。
+podAnnotations:
+  co.elastic.logs/enabled: "true"
+  co.elastic.logs/processors.1.dissect.field: message
+  co.elastic.logs/processors.1.dissect.tokenizer: '%{ts} %{level->} %{event->} %{msg} | %{ctx}'
+  co.elastic.logs/processors.1.dissect.target_prefix: app
+  co.elastic.logs/processors.2.decode_json_fields.fields: app.ctx
+  co.elastic.logs/processors.2.decode_json_fields.target: app
