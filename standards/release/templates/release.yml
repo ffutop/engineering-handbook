@@ -70,6 +70,17 @@ jobs:
             exit 1
           fi
 
+          # 数字预发布标识符不得包含前导零
+          if [[ "$TAG" == *-* ]]; then
+            IFS='.' read -ra identifiers <<< "${TAG#*-}"
+            for identifier in "${identifiers[@]}"; do
+              if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" =~ ^0[0-9]+$ ]]; then
+                echo "::error::数字预发布标识符不得包含前导零"
+                exit 1
+              fi
+            done
+          fi
+
           # checkout 会把 annotated tag 覆盖为 lightweight，重新取回 tag 对象
           git fetch --force --no-tags origin "+refs/tags/$TAG:refs/tags/$TAG"
           if [[ "$(git cat-file -t "refs/tags/$TAG")" != "tag" ]]; then
