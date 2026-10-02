@@ -5,3 +5,7 @@
 格式遵循[如何维护更新日志](https://keepachangelog.com/zh-CN/1.0.0/)，并遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [未发布]
+
+### 新增
+
+- 文档治理标准，统一现行规范来源、状态与变更要求。
