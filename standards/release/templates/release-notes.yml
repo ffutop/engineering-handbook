@@ -1,0 +1,28 @@
+# GitHub 自动生成发布说明的分类配置
+#
+# 规范来源：standards/release/github-release.md
+# 采用方式：复制到项目的 .github/release.yml；标签名可按项目调整；未带分类标签的 PR 归入「其他」。
+
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+    authors:
+      - dependabot[bot]
+      - renovate[bot]
+  categories:
+    - title: 破坏性变更
+      labels:
+        - breaking-change
+    - title: 新功能
+      labels:
+        - feature
+    - title: 缺陷修复
+      labels:
+        - bug
+    - title: 安全
+      labels:
+        - security
+    - title: 其他
+      labels:
+        - "*"

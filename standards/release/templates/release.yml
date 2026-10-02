@@ -1,0 +1,364 @@
+# GitHub 发版参考流水线
+#
+# 规范来源：standards/release/github-release.md
+# 采用方式：复制到项目的 .github/workflows/release.yml，只修改标注「项目适配」的位置。
+#
+# 流程：prepare → build / image / chart（并行）→ release（环境审批后统一对外发布）
+#
+#   prepare  校验 tag（格式、annotated、所在分支），计算版本号并探测制品类型
+#   build    调用项目构建契约产出二进制包，上传为 workflow artifact
+#   image    构建多架构镜像，只按 digest 推送（不打 tag，对外不可见）
+#   chart    lint 并打包 Helm chart，上传为 workflow artifact
+#   release  审批后：生成校验和与来源证明 → 创建草稿 Release → 镜像打 tag
+#            → 推送 chart → 最后公开 Release
+#
+# 所有 action 固定到完整 commit SHA，由 Dependabot / Renovate 维护升级。
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # 项目适配：允许发版的维护分支（正则，匹配 origin/ 之后的分支名）；默认分支总是允许
+  RELEASE_BRANCH_PATTERN: "release/.+"
+  # 项目适配：镜像目标平台
+  IMAGE_PLATFORMS: linux/amd64,linux/arm64
+  HELM_VERSION: v4.3.0
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      image: ${{ steps.detect.outputs.image }}
+      chart_repo: ${{ steps.detect.outputs.chart_repo }}
+      has_image: ${{ steps.detect.outputs.has_image }}
+      has_chart: ${{ steps.detect.outputs.has_chart }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          # SemVer 2.0，不允许 build metadata（`+` 不能出现在镜像 tag 中）
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if ! [[ "$TAG" =~ $semver ]]; then
+            echo "::error::tag '$TAG' 不符合 vMAJOR.MINOR.PATCH[-PRERELEASE]"
+            exit 1
+          fi
+
+          # checkout 会把 annotated tag 覆盖为 lightweight，重新取回 tag 对象
+          git fetch --force --no-tags origin "+refs/tags/$TAG:refs/tags/$TAG"
+          if [[ "$(git cat-file -t "refs/tags/$TAG")" != "tag" ]]; then
+            echo "::error::'$TAG' 必须是 annotated tag（git tag -a / -s）"
+            exit 1
+          fi
+
+          # tag 指向的提交必须已进入默认分支或维护分支（即已通过 PR 与必需检查）
+          if ! git branch -r --contains "$GITHUB_SHA" --format='%(refname:short)' \
+              | grep -Eq "^origin/(${DEFAULT_BRANCH}|${RELEASE_BRANCH_PATTERN})$"; then
+            echo "::error::$GITHUB_SHA 不在 ${DEFAULT_BRANCH} 或 ${RELEASE_BRANCH_PATTERN} 分支上"
+            exit 1
+          fi
+
+          version="${TAG#v}"
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          {
+            echo "tag=$TAG"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Detect deliverables
+        id: detect
+        env:
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          # 镜像仓库名必须为小写
+          echo "image=${REGISTRY}/${REPO,,}" >> "$GITHUB_OUTPUT"
+          echo "chart_repo=oci://${REGISTRY}/${OWNER,,}/charts" >> "$GITHUB_OUTPUT"
+          [[ -f Dockerfile ]] && echo "has_image=true" >> "$GITHUB_OUTPUT" || echo "has_image=false" >> "$GITHUB_OUTPUT"
+          compgen -G "charts/*/Chart.yaml" > /dev/null \
+            && echo "has_chart=true" >> "$GITHUB_OUTPUT" || echo "has_chart=false" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      # 项目适配：按需增删目标平台；无二进制交付物的项目可删除本 job，并从 release.needs 中移除
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 项目适配：在此安装语言工具链（setup-go / setup-node / setup-java …）
+
+      # 构建契约：产物写入 dist/，命名 <name>_<version>_<os>_<arch>.<ext>
+      - name: Build release artifacts
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: make release-artifacts VERSION="$VERSION" TARGET="$TARGET" OUT=dist
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  image:
+    needs: prepare
+    if: needs.prepare.outputs.has_image == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 只取 OCI labels / annotations；对外 tag 在 release job 审批后才添加
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ needs.prepare.outputs.image }}
+
+      - id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ env.IMAGE_PLATFORMS }}
+          build-args: VERSION=${{ needs.prepare.outputs.version }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          tags: ${{ needs.prepare.outputs.image }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.prepare.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  chart:
+    needs: prepare
+    if: needs.prepare.outputs.has_chart == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # chart version 与 appVersion 均由 tag 注入，仓库中的 Chart.yaml 版本号不作为发版依据
+      - name: Lint and package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for chart in charts/*/; do
+            helm dependency build "$chart"
+            helm lint --strict "$chart"
+            helm package "$chart" --version "$VERSION" --app-version "$VERSION" --destination dist
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-charts
+          path: dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [prepare, build, image, chart]
+    # image / chart 可能因项目无对应交付物而被跳过；任一依赖失败则不发布
+    if: ${{ !cancelled() && !failure() }}
+    runs-on: ubuntu-24.04
+    # 审批门：在仓库 Settings → Environments 中为 release 配置 required reviewers
+    environment:
+      name: release
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.tag }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      IMAGE: ${{ needs.prepare.outputs.image }}
+      IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+      CHART_REPO: ${{ needs.prepare.outputs.chart_repo }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*)
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::没有可发布的文件制品"
+            exit 1
+          fi
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Compose release notes
+        run: |
+          set -euo pipefail
+          {
+            echo "## 制品"
+            echo
+            echo "- 文件：见下方 Assets，使用 \`sha256sum -c SHA256SUMS\` 校验"
+            if [[ -n "$IMAGE_DIGEST" ]]; then
+              echo "- 镜像：\`${IMAGE}:${VERSION}\`（\`${IMAGE}@${IMAGE_DIGEST}\`）"
+            fi
+            for tgz in dist/*.tgz; do
+              [[ -e "$tgz" ]] || continue
+              name="$(basename "$tgz" "-${VERSION}.tgz")"
+              echo "- Helm chart：\`helm install <release> ${CHART_REPO}/${name} --version ${VERSION}\`"
+            done
+            echo "- 来源证明：\`gh attestation verify <file> -R ${GH_REPO}\`"
+            echo
+          } > notes.md
+
+      # 草稿阶段上传全部资产；已公开的 Release 不可被重跑覆盖
+      - name: Create draft release
+        run: |
+          set -euo pipefail
+          state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo missing)"
+          case "$state" in
+            missing)
+              flags=()
+              [[ "$PRERELEASE" == "true" ]] && flags+=(--prerelease --latest=false)
+              gh release create "$TAG" dist/* --draft --verify-tag --title "$TAG" \
+                --notes-file notes.md --generate-notes "${flags[@]}"
+              ;;
+            true)
+              gh release upload "$TAG" dist/* --clobber
+              ;;
+            *)
+              echo "::error::$TAG 已公开发布，禁止重新发布；请发布新的 patch 版本"
+              exit 1
+              ;;
+          esac
+
+      - if: env.IMAGE_DIGEST != ''
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: env.IMAGE_DIGEST != ''
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 预发布只得到 {{version}}；稳定版额外得到 MAJOR.MINOR、MAJOR 与 latest
+      - if: env.IMAGE_DIGEST != ''
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref_name, 'v0.') }}
+
+      - name: Tag image
+        if: env.IMAGE_DIGEST != ''
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r t; do args+=(-t "$t"); done <<< "$(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+          docker buildx imagetools create "${args[@]}" "${IMAGE}@${IMAGE_DIGEST}"
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+
+      - if: needs.prepare.outputs.has_chart == 'true'
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # 推送的是 chart job 产出、已计入 SHA256SUMS 的同一份 .tgz
+      - name: Push charts
+        if: needs.prepare.outputs.has_chart == 'true'
+        run: |
+          set -euo pipefail
+          helm registry login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
+          for tgz in dist/*.tgz; do
+            helm push "$tgz" "$CHART_REPO"
+          done
+
+      - name: Publish release
+        run: gh release edit "$TAG" --draft=false
