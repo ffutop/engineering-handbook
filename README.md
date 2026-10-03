@@ -6,6 +6,7 @@
 |---|---|
 | [规范治理](standards/documentation/standard-governance.md) | 明确适用范围、规则强度、采用版本与例外 |
 | [文档治理](standards/documentation/document-governance.md) | 规则来源唯一，决定、实现与验证可区分 |
+| [Git 提交信息](standards/git/commit-messages.md) | 变更意图清晰，提交保持单行并兼容既有规则 |
 | [Go 结构化日志](standards/logging/go-structured-logging.md) | 可检索、可定位、无泄露，成本可控 |
 | [Flyway 数据库迁移](standards/database/flyway-migration.md) | 历史可追溯，升级兼容，失败可恢复 |
 | [GitHub 发版](standards/release/github-release.md) | 版本与制品可追溯，部分发布可恢复 |
