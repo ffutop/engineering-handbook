@@ -10,6 +10,7 @@
 | [Git 提交信息](standards/git/commit-messages.md) | 变更意图清晰，提交保持单行并兼容既有规则 |
 | [Go 结构化日志](standards/logging/go-structured-logging.md) | 可检索、可定位、无泄露，成本可控 |
 | [Flyway 数据库迁移](standards/database/flyway-migration.md) | 历史可追溯，升级兼容，失败可恢复 |
+| [数据库审计时间](standards/database/audit-timestamps.md) | 时间语义明确，全部写入路径一致，历史回填可追溯 |
 | [GitHub 发版](standards/release/github-release.md) | 版本与制品可追溯，部分发布可恢复 |
 
 采用项目在 `ENGINEERING_STANDARDS.md` 中固定标准版本并声明项目策略。模板须适配后验证，具体能力和限制以对应规范为准。未发布修订须经过维护者评审后发布，不能直接当作已生效的项目约束。
